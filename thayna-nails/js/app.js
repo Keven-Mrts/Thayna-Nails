@@ -414,11 +414,23 @@ function initBooking() {
     return appAppointments;
   }
 
+  function timeToMins(t) {
+    if (!t) return 0;
+    const [h,m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+
   async function saveAppointment(apt) {
-    const apts = getAppointments();
-    // Double-check no duplicate
-    const dup = apts.find(a => a.date === apt.date && a.time === apt.time && a.status !== 'cancelled');
-    if (dup) return false;
+    // 1. Verificar se a data está bloqueada administrativamente
+    if (appBlockedDates.some(b => b.date === apt.date)) {
+      alert('⚠️ Esta data foi bloqueada pela administração.');
+      return false;
+    }
+    
+    // 2. Verificar sobreposição no momento do clique (double-check rigoroso)
+    if (isTimeOccupied(apt.date, apt.time, apt.duration)) {
+      return false;
+    }
     
     if (db) {
       try {
@@ -430,14 +442,25 @@ function initBooking() {
         return false;
       }
     } else {
+      const apts = getAppointments();
       apts.push(apt);
       Storage.set('appointments', apts);
       return true;
     }
   }
 
-  function isTimeOccupied(date, time) {
-    return getAppointments().some(a => a.date === date && a.time === time && a.status !== 'cancelled');
+  function isTimeOccupied(date, time, testDurationMins = 60) {
+    const testStart = timeToMins(time);
+    const testEnd = testStart + parseInt(testDurationMins);
+
+    return getAppointments().some(a => {
+      if (a.date !== date || a.status === 'cancelled') return false;
+      const aptStart = timeToMins(a.time);
+      const aptEnd = aptStart + (parseInt(a.duration) || 60);
+      
+      // Há sobreposição se o máximo dos inícios for menor que o mínimo dos finais
+      return Math.max(testStart, aptStart) < Math.min(testEnd, aptEnd);
+    });
   }
 
   // ── STEP NAVIGATION ──
@@ -622,8 +645,21 @@ function initBooking() {
       slots.push('17:00', '17:30', '18:00', '18:30', '19:00');
     }
 
+    const now = new Date();
+    const isToday = booking.date === formatDate(now);
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const dur = booking.service?.duration || 60;
+
     container.innerHTML = slots.map(slot => {
-      const occupied = isTimeOccupied(booking.date, slot);
+      const slotMins = timeToMins(slot);
+      let occupied = false;
+      
+      if (isToday && slotMins <= currentMins) {
+        occupied = true;
+      } else {
+        occupied = isTimeOccupied(booking.date, slot, dur);
+      }
+
       return `
         <button type="button" class="horario-btn${occupied ? ' occupied' : ''}" 
           data-time="${slot}" ${occupied ? 'disabled aria-disabled="true"' : 'aria-label="Selecionar horário ' + slot + '"'}>
@@ -679,18 +715,21 @@ function initBooking() {
     if (!valid) return;
 
     // Re-check availability
-    if (isTimeOccupied(booking.date, booking.time)) {
-      alert('⚠️ Este horário acabou de ser reservado por outra cliente. Por favor, escolha outro horário.');
+    if (isTimeOccupied(booking.date, booking.time, booking.service?.duration || 60)) {
+      alert('⚠️ Este horário (ou parte dele) acabou de ser reservado por outra cliente. Por favor, escolha outro horário.');
       goToStep(3);
       renderTimeSlots();
       return;
     }
+
+    const aptDuration = booking.service?.duration || 60;
 
     const appointment = {
       id: Date.now().toString(),
       service: booking.service?.name,
       serviceId: booking.service?.id,
       price: booking.service?.price,
+      duration: aptDuration,
       date: booking.date,
       time: booking.time,
       client: { nome, whatsapp, email, obs },
@@ -714,7 +753,16 @@ function initBooking() {
     const dateDisplay = formatDateDisplay(booking.date);
     modalMsg.textContent = `✅ ${nome}, seu horário foi reservado para ${dateDisplay} às ${booking.time} — ${booking.service?.name}.`;
 
-    const waText = encodeURIComponent(`Olá Thayna! Acabei de agendar meu horário pelo site:\n\n📋 *${booking.service?.name}*\n📅 ${dateDisplay} às ${booking.time}\n\nMeu nome: ${nome}\nWhatsApp: ${whatsapp}`);
+    // Check if exceeds business limits to append special whatsapp warning
+    const slotMins = timeToMins(booking.time);
+    const dateObj = new Date(booking.date + 'T12:00:00');
+    const dayEndMins = dateObj.getDay() === 6 ? 930 : 1170; // Sat=15:30, Weekday=19:30
+    let excessWarning = '';
+    if (slotMins + aptDuration > dayEndMins) {
+      excessWarning = '\n\n⚠️ *Aviso Importante:* O tempo previsto do meu serviço passará do horário normal de encerramento do studio. Aguardo sua confirmação manual para garantir que posso ser atendida!';
+    }
+
+    const waText = encodeURIComponent(`Olá Thayna! Acabei de agendar meu horário pelo site:\n\n📋 *${booking.service?.name}*\n📅 ${dateDisplay} às ${booking.time}\n\nMeu nome: ${nome}\nWhatsApp: ${whatsapp}${excessWarning}`);
     waLink.href = `https://wa.me/${WHATSAPP_NUMBER}?text=${waText}`;
 
     modal.classList.add('active');
