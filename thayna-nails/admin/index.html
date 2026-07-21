@@ -575,8 +575,27 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <script src="../js/data.js"></script>
 <script>
+// ── FIREBASE INIT ────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyDIOL7Q2V4203hKoEYx0r7NDeJ6TeOoXHk",
+  authDomain: "thayna-nails.firebaseapp.com",
+  projectId: "thayna-nails",
+  storageBucket: "thayna-nails.firebasestorage.app",
+  messagingSenderId: "420431391301",
+  appId: "1:420431391301:web:314cfe3f55857daeae112c",
+  measurementId: "G-JCEEF74ERE"
+};
+
+let db = null;
+if (firebaseConfig.apiKey !== "AIzaSyB...") {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+}
+
 // ── AUTH ──────────────────────────────────────────
 const ADMIN_USER = 'thaynavv';
 const ADMIN_PASS = '1026960k';
@@ -616,22 +635,54 @@ document.getElementById('logout-btn').addEventListener('click', () => {
   adminApp.style.display = 'none';
 });
 
-// ── STORAGE ──────────────────────────────────────
+// ── STORAGE & FIREBASE SYNC ─────────────────────────
 const ST = {
   get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set: (k,v) => localStorage.setItem(k, JSON.stringify(v)),
 };
 
-function getApts() { return ST.get('appointments') || []; }
-function getBlockedDates() { return ST.get('blocked_dates') || []; }
-function getAdminGallery() {
-  const saved = ST.get('admin_gallery');
-  return saved || GALLERY;
+const localData = {
+  appointments: ST.get('appointments') || [],
+  categories: ST.get('admin_categories') || SERVICE_CATEGORIES,
+  gallery: ST.get('admin_gallery') || GALLERY,
+  blocked_dates: ST.get('blocked_dates') || []
+};
+
+function getApts() { return localData.appointments; }
+function getBlockedDates() { return localData.blocked_dates; }
+function getAdminGallery() { return localData.gallery; }
+function getAdminCategories() { return localData.categories; }
+
+if (db) {
+  // Sync Appointments
+  db.collection('appointments').onSnapshot(snap => {
+    localData.appointments = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    ST.set('appointments', localData.appointments);
+    if ($('.panel.active')?.id === 'panel-dashboard') renderDashboard();
+    if ($('.panel.active')?.id === 'panel-agendamentos') renderApts(document.getElementById('filter-status')?.value || 'all');
+  });
+
+  // Sync Categories
+  db.collection('categories').onSnapshot(snap => {
+    if(!snap.empty) {
+      localData.categories = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      ST.set('admin_categories', localData.categories);
+      if ($('.panel.active')?.id === 'panel-servicos') renderServices();
+    }
+  });
+
+  // Sync Gallery
+  db.collection('gallery').orderBy('createdAt', 'asc').onSnapshot(snap => {
+    if(!snap.empty) {
+      localData.gallery = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      ST.set('admin_gallery', localData.gallery);
+      if ($('.panel.active')?.id === 'panel-galeria') renderAdminGallery();
+    }
+  });
 }
-function getAdminCategories() {
-  const saved = ST.get('admin_categories');
-  return saved || SERVICE_CATEGORIES;
-}
+
+const $ = sel => document.querySelector(sel);
+
 
 // ── PANELS ───────────────────────────────────────
 function initAdmin() {
@@ -653,6 +704,59 @@ function initAdmin() {
   initPhotoModal();
   initServiceModal();
   initFilterStatus();
+
+  // Botão de Diagnóstico (Temporário)
+  const header = document.querySelector('.topbar-actions');
+  if (header && !document.getElementById('btn-diagnostico')) {
+    const btn = document.createElement('button');
+    btn.id = 'btn-diagnostico';
+    btn.className = 'btn-outline-sm';
+    btn.style.marginLeft = '12px';
+    btn.textContent = '☁️ Verificar Nuvem';
+    btn.onclick = verifyAndSeedFirebase;
+    header.prepend(btn);
+  }
+}
+
+async function verifyAndSeedFirebase() {
+  if (!db) {
+    alert('Erro: Firebase não configurado. Verifique as chaves.');
+    return;
+  }
+  try {
+    alert('Conectando à nuvem... Por favor, aguarde.');
+    // Testa leitura
+    const catsSnap = await db.collection('categories').get();
+    let seeded = 0;
+    
+    // Se estiver vazio, envia as categorias
+    if (catsSnap.empty) {
+      const fallbackCats = typeof SERVICE_CATEGORIES !== 'undefined' ? SERVICE_CATEGORIES : [];
+      for (const cat of fallbackCats) {
+        await db.collection('categories').doc(cat.id).set(cat, { merge: true });
+        seeded++;
+      }
+    }
+    
+    // Testa galeria
+    const galSnap = await db.collection('gallery').get();
+    if (galSnap.empty) {
+      const fallbackGal = typeof GALLERY !== 'undefined' ? GALLERY : [];
+      for (const img of fallbackGal) {
+        await db.collection('gallery').add({ ...img, createdAt: new Date().toISOString() });
+        seeded++;
+      }
+    }
+
+    if (seeded > 0) {
+      alert(`✅ Sucesso! Firebase funcionando perfeitamente.\n\n${seeded} itens foram enviados para a sua nuvem.`);
+    } else {
+      alert('✅ Firebase funcionando! Os dados já estão na nuvem.');
+    }
+  } catch(e) {
+    console.error(e);
+    alert('❌ Erro ao conectar no Firebase. Verifique o console. Detalhe: ' + e.message);
+  }
 }
 
 function renderPanel(p) {
@@ -747,8 +851,11 @@ function buildAptTable(apts, showCancel = false) {
   `;
 }
 
-function cancelApt(id) {
+async function cancelApt(id) {
   if (!confirm('Cancelar este agendamento?')) return;
+  if (db) {
+    try { await db.collection('appointments').doc(id).update({ status: 'cancelled' }); showToast('Cancelado na nuvem.', 'success'); return; } catch(e) { console.error(e); }
+  }
   const apts = getApts();
   const apt = apts.find(a => a.id === id);
   if (apt) { apt.status = 'cancelled'; ST.set('appointments', apts); }
@@ -756,8 +863,11 @@ function cancelApt(id) {
   showToast('Agendamento cancelado.', 'success');
 }
 
-function deleteApt(id) {
+async function deleteApt(id) {
   if (!confirm('Excluir permanentemente?')) return;
+  if (db) {
+    try { await db.collection('appointments').doc(id).delete(); showToast('Excluído na nuvem.', 'success'); return; } catch(e) { console.error(e); }
+  }
   const apts = getApts().filter(a => a.id !== id);
   ST.set('appointments', apts);
   renderApts(document.getElementById('filter-status')?.value || 'all');
@@ -861,12 +971,25 @@ function editCategory(id) {
   openModal('category-modal');
 }
 
-function saveCategory() {
+async function saveCategory() {
   const id = document.getElementById('category-modal-id').value;
   const name = document.getElementById('cm-name').value.trim();
   const startingPrice = document.getElementById('cm-starting-price').value.trim();
   const icon = document.getElementById('cm-icon').value.trim();
   if (!name) { showToast('Preencha o nome.', 'error'); return; }
+
+  const catObj = { name, startingPrice, icon };
+  if (!id) catObj.services = [];
+  
+  if (db) {
+    try {
+      if (id) await db.collection('categories').doc(id).set(catObj, { merge: true });
+      else await db.collection('categories').add(catObj);
+      closeModal('category-modal');
+      showToast('Salvo na nuvem!', 'success');
+      return;
+    } catch(e) { console.error(e); }
+  }
 
   let cats = getAdminCategories();
   if (id) {
@@ -880,8 +1003,11 @@ function saveCategory() {
   showToast('Categoria salva!', 'success');
 }
 
-function deleteCategory(id) {
+async function deleteCategory(id) {
   if(!confirm('Excluir esta categoria e todos os seus serviços?')) return;
+  if (db) {
+    try { await db.collection('categories').doc(id).delete(); showToast('Excluído.', 'success'); return; } catch(e) { console.error(e); }
+  }
   let cats = getAdminCategories().filter(c => c.id !== id);
   ST.set('admin_categories', cats);
   renderServices();
@@ -914,19 +1040,23 @@ function editService(catId, srvId) {
   openModal('service-modal');
 }
 
-function deleteService(catId, srvId) {
+async function deleteService(catId, srvId) {
   if(!confirm('Excluir este serviço?')) return;
   let cats = getAdminCategories();
   const c = cats.find(x => x.id === catId);
-  if(c) {
-    c.services = c.services.filter(x => x.id !== srvId);
-    ST.set('admin_categories', cats);
-    renderServices();
-    showToast('Serviço excluído.', 'success');
+  if(!c) return;
+
+  const newServices = c.services.filter(x => x.id !== srvId);
+  if (db) {
+    try { await db.collection('categories').doc(catId).update({ services: newServices }); showToast('Serviço excluído.', 'success'); return; } catch(e) { console.error(e); }
   }
+  c.services = newServices;
+  ST.set('admin_categories', cats);
+  renderServices();
+  showToast('Serviço excluído.', 'success');
 }
 
-function saveService() {
+async function saveService() {
   const catId = document.getElementById('service-category-id').value;
   const srvId = document.getElementById('service-modal-id').value;
   const name = document.getElementById('sm-name').value.trim();
@@ -939,11 +1069,24 @@ function saveService() {
   const c = cats.find(x => x.id === catId);
   if (!c) return;
 
+  const newServices = [...(c.services||[])];
   if (srvId) {
-    c.services = c.services.map(s => s.id === srvId ? {...s, name, price, duration} : s);
+    const idx = newServices.findIndex(s => s.id === srvId);
+    if(idx>=0) newServices[idx] = {...newServices[idx], name, price, duration};
   } else {
-    c.services.push({ id: 'srv-'+Date.now(), name, price, duration });
+    newServices.push({ id: 'srv-'+Date.now(), name, price, duration });
   }
+
+  if (db) {
+    try {
+      await db.collection('categories').doc(catId).set({ services: newServices }, { merge: true });
+      closeModal('service-modal');
+      showToast('Serviço salvo!', 'success');
+      return;
+    } catch(e) { console.error(e); }
+  }
+
+  c.services = newServices;
   ST.set('admin_categories', cats);
   closeModal('service-modal');
   renderServices();
@@ -957,7 +1100,7 @@ function renderAdminGallery() {
     <div style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:.75;background:#F9F0E8;">
       <img src="${item.src}" alt="${item.label}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" />
       <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(44,26,14,.7),transparent);opacity:0;transition:.2s;display:flex;align-items:flex-end;padding:10px;" class="gallery-overlay" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0">
-        <button class="btn-sm btn-danger" onclick="removePhoto(${i})">Excluir</button>
+        <button class="btn-sm btn-danger" onclick="removePhoto('${item.id || i}', ${i})">Excluir</button>
       </div>
     </div>
   `).join('');
@@ -965,12 +1108,23 @@ function renderAdminGallery() {
 
 function initPhotoModal() {
   document.getElementById('add-photo-btn')?.addEventListener('click', () => openModal('photo-modal'));
-  document.getElementById('save-photo-btn')?.addEventListener('click', () => {
+  document.getElementById('save-photo-btn')?.addEventListener('click', async () => {
     const url = document.getElementById('pm-url').value.trim();
     const label = document.getElementById('pm-label').value.trim() || 'Foto';
     if (!url) { showToast('Informe a URL da imagem.', 'error'); return; }
+    
+    if (db) {
+       try { 
+         await db.collection('gallery').add({ src: url, label, createdAt: new Date().toISOString() });
+         closeModal('photo-modal');
+         showToast('Salvo na nuvem!', 'success');
+         document.getElementById('pm-url').value = '';
+         return;
+       } catch(e) { console.error(e); }
+    }
+    
     const gallery = getAdminGallery();
-    gallery.push({ src: url, label });
+    gallery.push({ src: url, label, createdAt: new Date().toISOString() });
     ST.set('admin_gallery', gallery);
     closeModal('photo-modal');
     renderAdminGallery();
@@ -979,8 +1133,11 @@ function initPhotoModal() {
   });
 }
 
-function removePhoto(idx) {
+async function removePhoto(id, idx) {
   if (!confirm('Excluir esta foto?')) return;
+  if (db && typeof id === 'string' && id.length > 5) {
+    try { await db.collection('gallery').doc(id).delete(); showToast('Removido da nuvem.', 'success'); return; } catch(e) { console.error(e); }
+  }
   const gallery = getAdminGallery();
   gallery.splice(idx, 1);
   ST.set('admin_gallery', gallery);

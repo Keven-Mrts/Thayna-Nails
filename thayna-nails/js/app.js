@@ -15,18 +15,66 @@ const Storage = {
   set: (key, val) => localStorage.setItem(key, JSON.stringify(val)),
 };
 
+// ─── FIREBASE INIT ──────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyDIOL7Q2V4203hKoEYx0r7NDeJ6TeOoXHk",
+  authDomain: "thayna-nails.firebaseapp.com",
+  projectId: "thayna-nails",
+  storageBucket: "thayna-nails.firebasestorage.app",
+  messagingSenderId: "420431391301",
+  appId: "1:420431391301:web:314cfe3f55857daeae112c",
+  measurementId: "G-JCEEF74ERE"
+};
+
+let db = null;
+if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== "AIzaSyB...") {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+}
+
+let appCategories = null;
+let appGallery = null;
+let appAppointments = [];
+
 // ─── INIT ────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initLoading();
   initParticles();
   initHeader();
   initMobileMenu();
   initAOS();
   initBackToTop();
+  initFAQ();
+
+  // Load dynamic data
+  if (db) {
+    try {
+      const [catSnap, galSnap] = await Promise.all([
+        db.collection('categories').get(),
+        db.collection('gallery').orderBy('createdAt', 'asc').get()
+      ]);
+      if (!catSnap.empty) appCategories = catSnap.docs.map(d => ({id: d.id, ...d.data()}));
+      if (!galSnap.empty) appGallery = galSnap.docs.map(d => ({id: d.id, ...d.data()}));
+      
+      db.collection('appointments').onSnapshot(snap => {
+        appAppointments = snap.docs.map(d => ({id: d.id, ...d.data()}));
+      });
+    } catch(e) { console.error('Erro ao carregar dados:', e); }
+  } else {
+    try {
+      appCategories = JSON.parse(localStorage.getItem('admin_categories'));
+      appGallery = JSON.parse(localStorage.getItem('admin_gallery'));
+      appAppointments = JSON.parse(localStorage.getItem('appointments')) || [];
+    } catch(e) {}
+  }
+
+  // Fallbacks to default data if empty
+  if (!appCategories || !appCategories.length) appCategories = typeof SERVICE_CATEGORIES !== 'undefined' ? SERVICE_CATEGORIES : [];
+  if (!appGallery || !appGallery.length) appGallery = typeof GALLERY !== 'undefined' ? GALLERY : [];
+
   initServices();
   initGallery();
   initTestimonials();
-  initFAQ();
   initBooking();
   initFooter();
 });
@@ -126,11 +174,7 @@ function initServices() {
   const grid = $('#servicos-grid');
   if (!grid) return;
   
-  let cats = SERVICE_CATEGORIES;
-  try {
-    const saved = JSON.parse(localStorage.getItem('admin_categories'));
-    if (saved) cats = saved;
-  } catch(e) {}
+  let cats = appCategories;
 
   grid.innerHTML = cats.map((c, i) => `
     <div class="category-card" data-aos="fade-up" style="margin-bottom:16px; border: 1.5px solid #F0E0CC; border-radius: 12px; overflow:hidden; background: #fff;">
@@ -177,12 +221,7 @@ let galleryItems = [];
 function initGallery() {
   const grid = $('#galeria-grid');
   if (!grid) return;
-  try {
-    const saved = JSON.parse(localStorage.getItem('admin_gallery'));
-    galleryItems = saved || GALLERY;
-  } catch(e) {
-    galleryItems = GALLERY;
-  }
+  galleryItems = appGallery;
 
   renderGallery();
 
@@ -363,19 +402,30 @@ function initBooking() {
   let calYear = new Date().getFullYear();
   let calMonth = new Date().getMonth();
 
-  // Load appointments from localStorage
+  // Load appointments from localStorage or Firebase state
   function getAppointments() {
-    return Storage.get('appointments') || [];
+    return appAppointments;
   }
 
-  function saveAppointment(apt) {
+  async function saveAppointment(apt) {
     const apts = getAppointments();
     // Double-check no duplicate
-    const dup = apts.find(a => a.date === apt.date && a.time === apt.time);
+    const dup = apts.find(a => a.date === apt.date && a.time === apt.time && a.status !== 'cancelled');
     if (dup) return false;
-    apts.push(apt);
-    Storage.set('appointments', apts);
-    return true;
+    
+    if (db) {
+      try {
+        await db.collection('appointments').doc(apt.id).set(apt);
+        return true;
+      } catch(e) {
+        console.error('Erro ao salvar agendamento:', e);
+        return false;
+      }
+    } else {
+      apts.push(apt);
+      Storage.set('appointments', apts);
+      return true;
+    }
   }
 
   function isTimeOccupied(date, time) {
@@ -398,11 +448,7 @@ function initBooking() {
   // ── STEP 1: SERVICES ──
   const servicosOptions = $('#servico-options');
   if (servicosOptions) {
-    let cats = SERVICE_CATEGORIES;
-    try {
-      const saved = JSON.parse(localStorage.getItem('admin_categories'));
-      if (saved) cats = saved;
-    } catch(e){}
+    let cats = appCategories;
 
     servicosOptions.innerHTML = cats.map(c => `
       <div class="booking-cat-card" style="margin-bottom:12px; border: 1.5px solid #F0E0CC; border-radius: 12px; overflow:hidden;">
@@ -606,7 +652,7 @@ function initBooking() {
 
   // ── FORM SUBMIT ──
   const form = $('#booking-form');
-  form?.addEventListener('submit', e => {
+  form?.addEventListener('submit', async e => {
     e.preventDefault();
     const nome = $('#cliente-nome')?.value.trim();
     const whatsapp = $('#cliente-whatsapp')?.value.trim();
@@ -646,9 +692,9 @@ function initBooking() {
       createdAt: new Date().toISOString(),
     };
 
-    const saved = saveAppointment(appointment);
+    const saved = await saveAppointment(appointment);
     if (!saved) {
-      alert('⚠️ Este horário já estava ocupado. Por favor, escolha outro.');
+      alert('⚠️ Este horário já estava ocupado ou houve um erro. Por favor, tente outro.');
       goToStep(3);
       renderTimeSlots();
       return;
