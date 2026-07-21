@@ -605,15 +605,12 @@ function initBooking() {
     const intervalMins = duration <= 30 ? 30 : 60;
 
     const slots = [];
-    for (let h = BUSINESS_HOURS.start; h < end; h++) {
-      // Skip lunch
-      if (h >= BUSINESS_HOURS.lunchStart && h < BUSINESS_HOURS.lunchEnd) continue;
-      slots.push(`${String(h).padStart(2,'0')}:00`);
-      if (intervalMins === 30) {
-        if (!(h + 0.5 >= BUSINESS_HOURS.lunchStart && h + 0.5 < BUSINESS_HOURS.lunchEnd)) {
-          slots.push(`${String(h).padStart(2,'0')}:30`);
-        }
-      }
+    if (isSat) {
+      // Sábado: 08:00 - 10:00 e 13:00 - 15:30
+      slots.push('08:00', '08:30', '09:00', '09:30', '13:00', '13:30', '14:00', '14:30', '15:00');
+    } else {
+      // Segunda a Sexta: 17:00 - 19:30
+      slots.push('17:00', '17:30', '18:00', '18:30', '19:00');
     }
 
     container.innerHTML = slots.map(slot => {

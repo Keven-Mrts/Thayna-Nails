@@ -822,6 +822,16 @@ function initFilterStatus() {
   });
 }
 
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function buildAptTable(apts, showCancel = false) {
   return `
     <table>
@@ -832,17 +842,17 @@ function buildAptTable(apts, showCancel = false) {
         ${apts.map(a => `
           <tr>
             <td>${formatDateDisplay(a.date)}</td>
-            <td><strong>${a.time}</strong></td>
+            <td><strong>${escapeHTML(a.time)}</strong></td>
             <td>
-              <strong>${a.client?.nome || '-'}</strong><br>
-              <small style="color:#C4A882;">${a.client?.whatsapp||''}</small>
+              <strong>${escapeHTML(a.client?.nome || '-')}</strong><br>
+              <small style="color:#C4A882;">${escapeHTML(a.client?.whatsapp||'')}</small>
             </td>
-            <td>${a.service||'-'}</td>
-            <td>${a.price||'-'}</td>
+            <td>${escapeHTML(a.service||'-')}</td>
+            <td>${escapeHTML(a.price||'-')}</td>
             <td><span class="badge ${a.status==='confirmed'?'badge-success':'badge-danger'}">${a.status==='confirmed'?'Confirmado':'Cancelado'}</span></td>
             ${showCancel ? `<td>
-              ${a.status==='confirmed'?`<button class="btn-sm btn-danger" onclick="cancelApt('${a.id}')">Cancelar</button>`:''}
-              <button class="btn-sm btn-danger" onclick="deleteApt('${a.id}')" style="margin-left:4px;">Excluir</button>
+              ${a.status==='confirmed'?`<button class="btn-sm btn-danger" onclick="cancelApt('${escapeHTML(a.id)}')">Cancelar</button>`:''}
+              <button class="btn-sm btn-danger" onclick="deleteApt('${escapeHTML(a.id)}')" style="margin-left:4px;">Excluir</button>
             </td>` : ''}
           </tr>
         `).join('')}
