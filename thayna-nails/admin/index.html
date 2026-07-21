@@ -679,6 +679,13 @@ if (db) {
       if ($('.panel.active')?.id === 'panel-galeria') renderAdminGallery();
     }
   });
+
+  // Sync Blocked Dates
+  db.collection('blocked_dates').onSnapshot(snap => {
+    localData.blocked_dates = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    ST.set('blocked_dates', localData.blocked_dates);
+    if ($('.panel.active')?.id === 'panel-bloqueios') renderBlockedDates();
+  });
 }
 
 const $ = sel => document.querySelector(sel);
@@ -1157,14 +1164,24 @@ async function removePhoto(id, idx) {
 
 // ── BLOCKED DATES ────────────────────────────────
 function initBlockForm() {
-  document.getElementById('block-form')?.addEventListener('submit', e => {
+  document.getElementById('block-form')?.addEventListener('submit', async e => {
     e.preventDefault();
     const date = document.getElementById('block-date').value;
     const reason = document.getElementById('block-reason').value.trim();
     if (!date) return;
+    
+    if (db) {
+      try {
+        await db.collection('blocked_dates').add({ date, reason });
+        e.target.reset();
+        showToast('Data bloqueada na nuvem!', 'success');
+        return;
+      } catch (err) { console.error(err); }
+    }
+    
     const blocked = getBlockedDates();
     if (!blocked.find(b => b.date === date)) {
-      blocked.push({ date, reason });
+      blocked.push({ date, reason, id: 'b-'+Date.now() });
       ST.set('blocked_dates', blocked);
     }
     renderBlockedDates();
@@ -1179,13 +1196,16 @@ function renderBlockedDates() {
   if (!blocked.length) { list.innerHTML = '<p style="color:#C4A882;font-size:.875rem;">Nenhuma data bloqueada.</p>'; return; }
   list.innerHTML = blocked.map((b,i) => `
     <div class="block-chip">
-      📅 ${b.date} ${b.reason ? `— ${b.reason}` : ''}
-      <button onclick="unblockDate(${i})" aria-label="Remover bloqueio">×</button>
+      📅 ${b.date} ${escapeHTML(b.reason) ? `— ${escapeHTML(b.reason)}` : ''}
+      <button onclick="unblockDate('${b.id || i}', ${i})" aria-label="Remover bloqueio">×</button>
     </div>
   `).join('');
 }
 
-function unblockDate(idx) {
+async function unblockDate(id, idx) {
+  if (db && typeof id === 'string' && id.length > 5) {
+    try { await db.collection('blocked_dates').doc(id).delete(); showToast('Desbloqueada.', 'success'); return; } catch(err) { console.error(err); }
+  }
   const blocked = getBlockedDates();
   blocked.splice(idx, 1);
   ST.set('blocked_dates', blocked);

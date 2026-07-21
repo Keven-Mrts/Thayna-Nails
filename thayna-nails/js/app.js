@@ -35,6 +35,7 @@ if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== "AIzaSyB...") {
 let appCategories = null;
 let appGallery = null;
 let appAppointments = [];
+let appBlockedDates = [];
 
 // ─── INIT ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -58,6 +59,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       db.collection('appointments').onSnapshot(snap => {
         appAppointments = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        if ($('#calendar-days')) renderCalendar();
+      });
+      
+      db.collection('blocked_dates').onSnapshot(snap => {
+        appBlockedDates = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        if ($('#calendar-days')) renderCalendar();
       });
     } catch(e) { console.error('Erro ao carregar dados:', e); }
   } else {
@@ -419,6 +426,7 @@ function initBooking() {
         return true;
       } catch(e) {
         console.error('Erro ao salvar agendamento:', e);
+        alert('Erro do banco de dados: ' + e.message);
         return false;
       }
     } else {
@@ -547,14 +555,15 @@ function initBooking() {
       const isBusinessDay = BUSINESS_HOURS.days.includes(dayOfWeek);
       const isSelected = booking.date === dateStr;
       const hasApts = getAppointments().some(a => a.date === dateStr);
+      const isBlocked = appBlockedDates.some(b => b.date === dateStr);
 
       let classes = 'cal-day';
-      if (isPast || !isBusinessDay) classes += ' disabled';
+      if (isPast || !isBusinessDay || isBlocked) classes += ' disabled';
       if (date.toDateString() === today.toDateString()) classes += ' today';
       if (isSelected) classes += ' selected';
       if (hasApts && !isPast) classes += ' has-bookings';
 
-      html += `<div class="${classes}" data-date="${dateStr}" ${isPast || !isBusinessDay ? '' : 'tabindex="0"'}>${d}</div>`;
+      html += `<div class="${classes}" data-date="${dateStr}" ${isPast || !isBusinessDay || isBlocked ? '' : 'tabindex="0"'}>${d}</div>`;
     }
 
     // Fill remaining
